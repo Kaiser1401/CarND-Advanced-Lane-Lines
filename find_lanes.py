@@ -45,8 +45,35 @@ def undistort_img(img,mtx,dist):
 
 
 
-def image_processing(img):
+def image_processing(img,Tmtrx):
     #process image and return an image for further processing
+
+    #perspective
+    pers = perspective(img,Tmtrx,(640,1000))
+
+
+    img_gray = cv2.cvtColor(pers,cv2.COLOR_RGB2GRAY)
+
+    img_hsv = cv2.cvtColor(pers, cv2.COLOR_RGB2HSV)
+
+    img_sobel_x = cv2.Sobel(img_gray, cv2.CV_64F, 1, 0)
+    img_sobel_x = np.absolute(img_sobel_x)
+    img_sobel_x = np.uint8(255 * img_sobel_x / np.max(img_sobel_x))
+
+    bin_hsv = binFilter(img_hsv,[(0,255),(100,255),(50,255)])
+
+
+
+
+
+    if C_DEBUG:
+        print('debug')
+        show_image(pers)
+        show_image(img_gray)
+        show_image(img_hsv)
+        show_image(img_sobel_x)
+        show_image(bin_hsv)
+
 
     return img
 
@@ -68,19 +95,45 @@ def main():
     # main, do something
     global C_DEBUG # may be changed here
 
+
     # calibrate camera
     cal_chess_corners = (9,6)
     cal_images = load_images('camera_cal/')
     t1, mtx, distortion, t2, t3 = camera_calibration(cal_images,cal_chess_corners)
 
-    #C_DEBUG=True
+    C_DEBUG = False
     if C_DEBUG:
         for im in cal_images:
             iu = undistort_img(im,mtx,distortion)
             show_image(iu)
 
 
+
+    # examples
+    ##C_DEBUG = True
+    images = load_images('test_images/')
+    if C_DEBUG:
+        for im in images:
+            iu = undistort_img(im,mtx,distortion)
+            show_image(iu)
+
+    src  = np.float32([(220,720), (570,470), (720,470), (1110,720)])
+    dest = np.float32([(220,2000), (220,0), (1110,0), (1110,2000)])
+    dest *= 0.5
+    Tmtrx=getTransformMatrix(src,dest)
+
+
+    C_DEBUG = True
+    for im in images:
+        image_processing(undistort_img(im,mtx,distortion),Tmtrx)
+
+
+
     #load video / sample images
+
+
+
+
 
     #process images with calibration
 

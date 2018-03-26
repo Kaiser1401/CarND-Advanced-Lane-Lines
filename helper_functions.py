@@ -33,10 +33,28 @@ def load_images(folder):
         imgList.append(load_image(folder+f))
     return imgList
 
+def getTransformMatrix(sources, targets):
+    return cv2.getPerspectiveTransform(sources,targets)
+
+def perspective(im,matrix,dest_size):
+    return cv2.warpPerspective(im,matrix,dest_size,flags=cv2.INTER_LINEAR)
 
 def load_image(path):
     return mpimg.imread(path)
 
+def binFilter(img,thres): # multi channel binary-AND-Filter
+    binary = np.ones_like(img) # shape!!
+
+    for i in range(len(thres)):
+        tmp = img[:,:,i]
+        thrs = thres[i]
+        binary[(tmp >= thrs[0]) & (tmp <= thrs[1]) & (binary > 0)] = 1
+
+def comBinary(imges):
+    ret = np.ones_like(imges[0])
+    for i in range(len(imges)):
+        ret[(ret > 0) & (imges[i] > 0)] = 1
+    return ret
 
 def show_image(image):
     plt.imshow(image)
