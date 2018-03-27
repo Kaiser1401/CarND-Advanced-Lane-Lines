@@ -8,7 +8,7 @@ C_DEBUG = False
 def camera_calibration(images,chess_corners=(4,4)):
     # do the calibration, return matrices etc
 
-    shape = images[0].shape;
+    shape = images[0].shape
 
     for im in images:
         image_points = []
@@ -40,48 +40,44 @@ def camera_calibration(images,chess_corners=(4,4)):
 
     return (ret, mtx, distortion, rot_vect, trans_vect)
 
+
 def undistort_img(img,mtx,dist):
     return cv2.undistort(img,mtx,dist,None,mtx)
 
 
-
-def image_processing(img,Tmtrx):
+def image_processing(img,Tmtrx,out_size):
     #process image and return an image for further processing
 
     #perspective
-    pers = perspective(img,Tmtrx,(640,1000))
+    pers = perspective(img,Tmtrx,out_size) # perspective warp first
 
-
+    # prepare color spaces
     img_gray = cv2.cvtColor(pers,cv2.COLOR_RGB2GRAY)
+    img_hls = cv2.cvtColor(pers, cv2.COLOR_RGB2HLS)
 
-    img_hsv = cv2.cvtColor(pers, cv2.COLOR_RGB2HSV)
+    # edge detection
+    img_sobel = cv2.Sobel(img_gray, cv2.CV_64F, 1, 0) # only in X (perspective already 'corrected')
+    img_sobel = np.absolute(img_sobel)
+    img_sobel = np.uint8(255 * img_sobel / np.max(img_sobel)) # 0..255
 
-    img_sobel_x = cv2.Sobel(img_gray, cv2.CV_64F, 1, 0)
-    img_sobel_x = np.absolute(img_sobel_x)
-    img_sobel_x = np.uint8(255 * img_sobel_x / np.max(img_sobel_x))
+    # binary images
+    # lanes by color
+    bin_lanes = binFilter(img_hls, [(0, 60), (80, 255), (110, 255)])
+    # lanes by edge detection
+    bin_sobel = binFilter(img_sobel,[(50,255)])
 
-    bin_hsv = binFilter(img_hsv,[(0,255),(100,255),(50,255)])
-
-
-
-
+    # OR-combine
+    bin_img = comBinary([bin_lanes, bin_sobel],False)
 
     if C_DEBUG:
         print('debug')
         show_image(pers)
-        show_image(img_gray)
-        show_image(img_hsv)
-        show_image(img_sobel_x)
-        show_image(bin_hsv)
+        show_image(bin_lanes)
+        show_image(bin_sobel)
+        show_image(bin_img)
 
+    return bin_img, pers
 
-    return img
-
-
-def extract_lane_single(img):
-
-
-    return [left,right]
 
 def test():
     #img = load_image('test_images/straight_lines1.jpg')
@@ -89,12 +85,62 @@ def test():
     imgList=load_images('camera_cal/')
     show_image(imgList[3])
 
+def process_frame(mtx,distortion,Tmtrx,Tmtrx_Inv,out_size,windowsLeft,windowsRight,im):
+    # process images to binary lines
+    im_undist = undistort_img(im, mtx, distortion)
+
+    im_bin, pers= image_processing(im_undist, Tmtrx, out_size)
+
+    # find windows around lines
+    hist = find_windows(im_bin,windowsLeft,windowsRight,20)
+
+    xRatio = 1
+    yRatio = 1
+
+    poly_left = fit_windows(windowsLeft,xRatio,yRatio)
+    line_l = plot_poly(poly_left,out_size)
+
+    poly_right = fit_windows(windowsRight, xRatio, yRatio)
+    line_r = plot_poly(poly_right, out_size)
+
+    area = np.hstack((line_l,np.fliplr(line_r)))
+
+    lane_img = np.zeros_like(pers)
+    cv2.fillPoly(lane_img, np.int32(area), color=(0, 255, 255))
+    cv2.polylines(lane_img, np.int32(line_l), isClosed=False, color=(0, 0, 255), thickness=10)
+    cv2.polylines(lane_img, np.int32(line_r), isClosed=False, color=(0, 0, 255), thickness=10)
+
+    if C_DEBUG:
+#    if 1:
+        # draw lines
+        im_out = np.dstack((im_bin, im_bin, im_bin))*255
+        all_windows = []
+        all_windows.extend(windowsLeft)
+        all_windows.extend(windowsRight)
+        for w in all_windows:
+            if w.valid:
+                cv2.rectangle(im_out, (w.tl[1],w.tl[0]), (w.br[1],w.br[0]), (0, 255, 0), 5)
+            else:
+                cv2.rectangle(im_out, (w.tl[1], w.tl[0]), (w.br[1], w.br[0]), (255,0, 0), 5)
+
+
+
+        im_out = weighted_img(pers,im_out,0.9)
+        im_out = weighted_img(im_out,lane_img, 0.8)
+
+        lane_img = im_out
+        ##show_image(im_out)
+
+    unwarp = perspective(lane_img,Tmtrx_Inv,(im_undist.shape[1],im_undist.shape[0]))
+
+    processed_img = weighted_img(unwarp,im_undist,1,0.5,0)
+    ##show_image(processed_img)
+    return processed_img
 
 
 def main():
     # main, do something
     global C_DEBUG # may be changed here
-
 
     # calibrate camera
     cal_chess_corners = (9,6)
@@ -106,12 +152,11 @@ def main():
         for im in cal_images:
             iu = undistort_img(im,mtx,distortion)
             show_image(iu)
-
-
-
     # examples
     ##C_DEBUG = True
     images = load_images('test_images/')
+
+
     if C_DEBUG:
         for im in images:
             iu = undistort_img(im,mtx,distortion)
@@ -119,26 +164,36 @@ def main():
 
     src  = np.float32([(220,720), (570,470), (720,470), (1110,720)])
     dest = np.float32([(220,2000), (220,0), (1110,0), (1110,2000)])
-    dest *= 0.5
+    dest *= 0.5 # make it a bit smaller
     Tmtrx=getTransformMatrix(src,dest)
+    Tmtrx_Inv = getTransformMatrix(dest,src)
+
+    out_size = (640, 1000) # x,y
+    window_y_count = 10
+    window_width = 150
+
+    windowsLeft = createWindows(out_size[0],out_size[1],window_y_count,window_width,False)
+    windowsRight= createWindows(out_size[0],out_size[1],window_y_count,window_width,True)
+
+    ## Preparation Done ---- Looping images / video from here on
+    Video=True
 
 
-    C_DEBUG = True
-    for im in images:
-        image_processing(undistort_img(im,mtx,distortion),Tmtrx)
+    if Video:
+        project_video_output = "project_video_output.mp4"
+        project_video_input = VideoFileClip("project_video.mp4")
 
+        #define partial function for arguments
 
+        video_frame = partial(process_frame,mtx, distortion, Tmtrx, Tmtrx_Inv, out_size, windowsLeft, windowsRight)
 
-    #load video / sample images
+        processed_project_video = project_video_input.fl_image(video_frame)
+        processed_project_video.write_videofile(project_video_output, audio=False)
 
-
-
-
-
-    #process images with calibration
-
-    #detect lines
-
+    else:
+        for im in images:
+            res = process_frame(mtx,distortion,Tmtrx,Tmtrx_Inv,out_size, windowsLeft,windowsRight,im)
+            show_image(res)
 
     return 0
 
