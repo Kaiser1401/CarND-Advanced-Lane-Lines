@@ -92,11 +92,16 @@ class Window:
         self.br = br
         self.num_pixels = np
         self.valid = bValid
+        self.yMean = (br[0]-tl[0])/2
+        self.xMean = (br[1]-tl[1])/2
+        self.weight = 0
 
     def set_x_center(self,val):
         dx = int(val) - self.get_x_center()
         self.tl = (self.tl[0],int(self.tl[1]+dx))
         self.br = (self.br[0], int(self.br[1] + dx))
+        self.xMean = (self.br[1]-self.tl[1])/2;
+        return dx
         #print("Set: "+str(val)+"  "+str((self.br[1] + self.tl[1]) / 2))
 
     def get_x_center(self):
@@ -107,6 +112,22 @@ class Window:
     def get_y_center(self):
         return int((self.br[0]+self.tl[0])/2)
 
+    def get_y_mean(self):
+        return int(self.yMean)
+
+    def get_y_mean_total(self):
+        return self.tl[0]+self.get_y_mean()
+
+    def get_x_mean(self):
+        return int(self.xMean)
+
+    def get_x_mean_total(self):
+        return self.tl[1]+self.get_x_mean()
+
+    def get_weight(self):
+        return int(self.weight)
+
+
     def cropImg(self,img):
         yMin=max(self.tl[0],0)
         yMax=min(self.br[0],img.shape[0])
@@ -115,22 +136,35 @@ class Window:
         return img[yMin:yMax, xMin:xMax]
 
 
-    def centerAroundPixels(self,img,min_px=0):
+    def centerAroundPixels(self,img,min_px,lastweight,lastx,lasty):
         w_img = self.cropImg(img)
         #show_image(w_img)
         pixels = w_img.nonzero()
+        total_pixels = w_img.shape[0]*w_img.shape[1]
+
+        pxcount = len(pixels[1])
+        alpha_last = 0
+        if (lastweight+pxcount) > 0:
+            alpha_last = lastweight/(lastweight+pxcount)
 
         # enough pixels?
-        pxcount = len(pixels[1])
+
         #print(pxcount)
-        if pxcount > min_px:
-            mean = np.mean(pixels[1])
+        if pxcount > min_px and pxcount < (0.2 * total_pixels):
+            mean_x = int(np.mean(pixels[1])*(1-alpha_last)+lastx*(alpha_last))
+            mean_y = int(np.mean(pixels[0])*(1-alpha_last)+lasty*(alpha_last))
+
            # print(mean)
-            self.set_x_center(self.tl[1] + mean)
+            dx=self.set_x_center(self.tl[1] + mean_x)
+            self.yMean = mean_y
+            ##self.xMean = mean_x-dx
             self.valid = True
+            self.weight=int(pxcount*(1-alpha_last) + lastweight * alpha_last)
             #print("Valid")
         else:
             self.valid = False
+
+
             #print("-- Nope --")
         #print (self.tl)
 
@@ -170,23 +204,23 @@ def find_windows(img,WindowsLeft,WindowsRight,minPixels):
         # otherwise the window below
 
         #left
-        if not WindowsLeft[i].valid: # last frame valid?
+        if (not WindowsLeft[i].valid) and (WindowsLeft[i].get_weight() < 100 ): # last frame valid?
             if i==0:
                 WindowsLeft[i].set_x_center(xLeft) # to histogram peak
             else:
-                cx = WindowsLeft[i-1].get_x_center() # to window below
+                cx = WindowsLeft[i-1].get_x_mean_total() # to window below
                 WindowsLeft[i].set_x_center(cx)
 
         #right
-        if not WindowsRight[i].valid:
+        if (not WindowsRight[i].valid) and (WindowsRight[i].get_weight() < 100 ):
             if i == 0:
                 WindowsRight[i].set_x_center(xRight)
             else:
-                cx = WindowsRight[i - 1].get_x_center()
+                cx = WindowsRight[i - 1].get_x_mean_total()
                 WindowsRight[i].set_x_center(cx)
 
-        WindowsLeft[i].centerAroundPixels(img, minPixels)
-        WindowsRight[i].centerAroundPixels(img, minPixels)
+        WindowsLeft[i].centerAroundPixels(img, minPixels,WindowsLeft[i].get_weight(),WindowsLeft[i].get_x_mean(),WindowsLeft[i].get_y_mean())
+        WindowsRight[i].centerAroundPixels(img, minPixels,WindowsRight[i].get_weight(),WindowsRight[i].get_x_mean(),WindowsRight[i].get_y_mean())
 
     return hist
 
@@ -195,8 +229,9 @@ def fit_windows(windows,xRatio,yRatio):
     pointsY = []
     for w in windows:
         if w.valid:
-            pointsX.append(w.get_x_center()*xRatio)
-            pointsY.append(w.get_y_center()*yRatio)
+            for px in range(w.get_weight()):
+                pointsX.append(w.get_x_mean_total()*xRatio)
+                pointsY.append(w.get_y_mean_total()*yRatio)
 
     func_in_y = np.polyfit(pointsY,pointsX,2)
     return func_in_y  #windows[0].get_x_center() # polynom and start 'x'
@@ -208,10 +243,6 @@ def plot_poly(poly, out_size):
     line = np.array([np.transpose(np.vstack([x, y]))])
 
     return line #, y, x
-
-
-
-
 
 
 

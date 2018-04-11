@@ -3,6 +3,7 @@ from helper_functions import *
 # ---------------------------------
 
 C_DEBUG = False
+VID_DEBUG = True
 
 
 def camera_calibration(images,chess_corners=(4,4)):
@@ -92,7 +93,7 @@ def process_frame(mtx,distortion,Tmtrx,Tmtrx_Inv,out_size,windowsLeft,windowsRig
     im_bin, pers= image_processing(im_undist, Tmtrx, out_size)
 
     # find windows around lines
-    hist = find_windows(im_bin,windowsLeft,windowsRight,20)
+    hist = find_windows(im_bin,windowsLeft,windowsRight,100)
 
     xRatio = 1
     yRatio = 1
@@ -110,7 +111,8 @@ def process_frame(mtx,distortion,Tmtrx,Tmtrx_Inv,out_size,windowsLeft,windowsRig
     cv2.polylines(lane_img, np.int32(line_l), isClosed=False, color=(0, 0, 255), thickness=10)
     cv2.polylines(lane_img, np.int32(line_r), isClosed=False, color=(0, 0, 255), thickness=10)
 
-    if C_DEBUG:
+
+    if C_DEBUG or VID_DEBUG:
 #    if 1:
         # draw lines
         im_out = np.dstack((im_bin, im_bin, im_bin))*255
@@ -134,6 +136,30 @@ def process_frame(mtx,distortion,Tmtrx,Tmtrx_Inv,out_size,windowsLeft,windowsRig
     unwarp = perspective(lane_img,Tmtrx_Inv,(im_undist.shape[1],im_undist.shape[0]))
 
     processed_img = weighted_img(unwarp,im_undist,1,0.5,0)
+
+
+    #get curvature
+    world_yRatio = 30.0/(out_size[1]) #m/px
+    world_xRatio = 3.7/(out_size[0]*(455.0/600.0)) #m/px
+
+    poly_left = fit_windows(windowsLeft, world_xRatio, world_yRatio)
+    poly_right = fit_windows(windowsRight, world_xRatio, world_yRatio)
+
+    left_rad = ((1 + (2*poly_left[0]*out_size[1]*world_yRatio + poly_left[1])**2)**1.5) / np.absolute(2*poly_left[0])
+    right_rad = ((1 + (2*poly_right[0]*out_size[1]*world_yRatio + poly_right[1])**2)**1.5) / np.absolute(2*poly_right[0])
+
+    x_left_world = poly_left[0] * out_size[1]*world_yRatio** 2 + poly_left[1] * out_size[1]*world_yRatio + poly_left[2]
+    x_right_world = poly_right[0] * out_size[1]*world_yRatio** 2 + poly_right[1] * out_size[1]*world_yRatio + poly_right[2]
+
+    car_x = out_size[0]*world_xRatio / 2
+    lane_center = (x_right_world-x_left_world)/2
+
+    offset = lane_center-car_x
+
+    cv2.putText(processed_img, 'Curve Radius: ' + str((left_rad + right_rad) / 2)[:7] + ' m', (50, 50),cv2.FONT_HERSHEY_SIMPLEX, 1.6, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(processed_img, 'Offset: ' + str((offset))[:7] + ' m', (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (255, 255, 255), 2, cv2.LINE_AA)
+    #print(left_rad, right_rad, offset)
+
     ##show_image(processed_img)
     return processed_img
 
@@ -153,7 +179,7 @@ def main():
             iu = undistort_img(im,mtx,distortion)
             show_image(iu)
     # examples
-    ##C_DEBUG = True
+    #C_DEBUG = True
     images = load_images('test_images/')
 
 
@@ -177,10 +203,10 @@ def main():
 
     ## Preparation Done ---- Looping images / video from here on
     Video=True
-
+    #C_DEBUG=True
 
     if Video:
-        project_video_output = "project_video_output.mp4"
+        project_video_output = "project_video_output_2.mp4"
         project_video_input = VideoFileClip("project_video.mp4")
 
         #define partial function for arguments
