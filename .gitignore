@@ -1,1 +1,2 @@
-project_video_output.mp4
+project_video_*
+!project_video_output.mp4
